@@ -104,3 +104,31 @@ setup-genesis-wasm: $(GENESIS_WASM_SERVER_DIR)
 	fi
 	@cd $(GENESIS_WASM_SERVER_DIR) && npm install > /dev/null 2>&1 && \
 		echo "Installed genesis-wasm@1.0 server."
+
+# CUDA and CuDNN paths for Linux
+CUDA_PATH := /usr/local/cuda
+CUDNN_PATH := /usr/local/cuda
+
+# Compiler flags
+CFLAGS := -fPIC -I/usr/lib/erlang/erts-15.2.3/include
+CFLAGS += -I$(CUDA_PATH)/include
+CFLAGS += -I$(CUDNN_PATH)/include
+
+# Linker flags
+LDFLAGS := -L$(CUDA_PATH)/lib64
+LDFLAGS += -L$(CUDNN_PATH)/lib64
+LDFLAGS += -lcudart -lcudnn
+
+# Target
+TARGET := gpu_nif.so
+
+# Source files
+SRCS := c_src/gpu_nif.cpp
+
+# Build target
+$(TARGET): $(SRCS)
+	g++ $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
+
+.PHONY: clean
+clean:
+	rm -f $(TARGET)
