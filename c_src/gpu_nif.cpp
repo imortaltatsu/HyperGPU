@@ -66,6 +66,7 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
         CHECK_CUDNN(cudnnSetRNNDescriptor_v8(
             rnn_desc,
             CUDNN_RNN_ALGO_STANDARD,
+            CUDNN_LSTM,
             CUDNN_RNN_SINGLE_INP_BIAS,
             CUDNN_UNIDIRECTIONAL,
             CUDNN_LINEAR_INPUT,
