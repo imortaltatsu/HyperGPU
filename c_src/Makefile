@@ -1,6 +1,6 @@
 ERLANG_PATH = $(shell erl -eval 'io:format("~s", [lists:concat([code:root_dir(), "/erts-", erlang:system_info(version), "/include"])])' -s init stop -noshell)
-CUDA_PATH = C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2
-CUDNN_PATH = C:/Program Files/NVIDIA/CUDNN
+CUDA_PATH = /usr/local/cuda
+CUDNN_PATH = /usr/local/cudnn
 
 ifeq ($(OS),Windows_NT)
     CFLAGS = -I"$(ERLANG_PATH)" -I"$(CUDA_PATH)/include" -I"$(CUDNN_PATH)/include" -fPIC
