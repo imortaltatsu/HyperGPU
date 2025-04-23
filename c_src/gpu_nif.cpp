@@ -73,8 +73,9 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
             CUDNN_DATA_FLOAT,
             CUDNN_DATA_FLOAT,
             CUDNN_DEFAULT_MATH,
-            CUDNN_DETERMINISTIC,
             hidden_size,
+            hidden_size,
+            num_layers,
             num_layers,
             dropout_desc,
             CUDNN_RNN_PADDED_IO_ENABLED
