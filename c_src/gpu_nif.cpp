@@ -24,6 +24,7 @@
 // Global handles
 static cudnnHandle_t cudnn_handle = nullptr;
 static cudaStream_t stream = nullptr;
+static cudnnRNNDescriptor_t rnn_desc = nullptr;
 
 // Convert Erlang binary to C++ vector
 static std::vector<float> binary_to_vector(ErlNifBinary* bin) {
@@ -52,12 +53,31 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
         CHECK_CUDNN(cudnnCreate(&cudnn_handle));
         CHECK_CUDNN(cudnnSetStream(cudnn_handle, stream));
         
-        // Set deterministic mode
-        CHECK_CUDNN(cudnnSetRNNDescriptor_v8(cudnn_handle, CUDNN_RNN_ALGO_STANDARD, 
-                                            CUDNN_RNN_SINGLE_INF_DEVICE_MODE, 
-                                            CUDNN_UNIDIRECTIONAL, CUDNN_LINEAR_INPUT, 
-                                            CUDNN_DATA_FLOAT, CUDNN_DATA_FLOAT, 
-                                            CUDNN_DEFAULT_MATH, CUDNN_DETERMINISTIC));
+        // Create RNN descriptor
+        CHECK_CUDNN(cudnnCreateRNNDescriptor(&rnn_desc));
+        
+        // Set RNN descriptor with deterministic mode
+        int hidden_size = 128;
+        int num_layers = 1;
+        cudnnDropoutDescriptor_t dropout_desc;
+        CHECK_CUDNN(cudnnCreateDropoutDescriptor(&dropout_desc));
+        
+        // Set RNN descriptor
+        CHECK_CUDNN(cudnnSetRNNDescriptor_v8(
+            rnn_desc,
+            CUDNN_RNN_ALGO_STANDARD,
+            CUDNN_RNN_SINGLE_INP_BIAS,
+            CUDNN_UNIDIRECTIONAL,
+            CUDNN_LINEAR_INPUT,
+            CUDNN_DATA_FLOAT,
+            CUDNN_DATA_FLOAT,
+            CUDNN_DEFAULT_MATH,
+            CUDNN_DETERMINISTIC,
+            hidden_size,
+            num_layers,
+            dropout_desc,
+            CUDNN_RNN_PADDED_IO_ENABLED
+        ));
         
         return enif_make_atom(env, "ok");
     } catch (const std::exception& e) {
@@ -117,6 +137,11 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
 // Terminate GPU resources
 static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
+        if (rnn_desc) {
+            CHECK_CUDNN(cudnnDestroyRNNDescriptor(rnn_desc));
+            rnn_desc = nullptr;
+        }
+        
         if (cudnn_handle) {
             CHECK_CUDNN(cudnnDestroy(cudnn_handle));
             cudnn_handle = nullptr;
