@@ -47,7 +47,7 @@ info(_Msg1, _Opts) ->
     }.
 
 %% @doc Initialize the GPU device
-init(M1, _M2, Opts) ->
+init(M1, _M2, _Opts) ->
     ?event(running_init),
     case gpu_init() of
         {ok, _} -> 
@@ -75,8 +75,8 @@ compute(M1, M2, Opts) ->
                 throw({gpu_compute_error, Reason})
         end
     catch
-        error:Reason ->
-            throw({gpu_compute_error, Reason})
+        error:Error ->
+            throw({gpu_compute_error, Error})
     end.
 
 %% @doc Terminate the GPU device
