@@ -14,7 +14,6 @@
     ]},
     {env, []},
     {modules, [
-        dev_gpu
     ]},
     {licenses, ["BSL-1.1"]},
     {links, []}
