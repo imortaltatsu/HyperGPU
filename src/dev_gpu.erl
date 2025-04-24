@@ -2,14 +2,18 @@
 %%% using CUDA and CuDNN. This device allows for high-performance computation
 %%% on NVIDIA GPUs.
 -module(dev_gpu).
--export([info/1, init/3, compute/3, terminate/3, get_state/3, set_state/3]).
+-export([info/0, init/3, compute/3, terminate/3, get_state/3, set_state/3]).
 -include("include/hb.hrl").
 
 %% @doc Return the device's exported functions
-info(_) -> #{ exports => [init, compute, terminate, get_state, set_state] }.
+info() ->
+    #{
+        default => fun compute/3,
+        exports => [<<"init">>, <<"compute">>, <<"terminate">>, <<"get_state">>, <<"set_state">>]
+    }.
 
 %% @doc Initialize the GPU device
-init(_, _Request, _NodeMsg) ->
+init(_, Request, _NodeMsg) ->
     case gpu_nif:gpu_init() of
         ok -> {ok, #{ <<"status">> => <<"initialized">> }};
         {error, Reason} -> {error, Reason}
@@ -24,14 +28,14 @@ compute(_, Request, _NodeMsg) ->
     end.
 
 %% @doc Terminate GPU resources
-terminate(_, _Request, _NodeMsg) ->
+terminate(_, Request, _NodeMsg) ->
     case gpu_nif:gpu_terminate() of
         ok -> {ok, #{ <<"status">> => <<"terminated">> }};
         {error, Reason} -> {error, Reason}
     end.
 
 %% @doc Get the current GPU state
-get_state(_, _Request, _NodeMsg) ->
+get_state(_, Request, _NodeMsg) ->
     case gpu_nif:gpu_get_state() of
         {ok, State} -> {ok, #{ <<"state">> => State }};
         {error, Reason} -> {error, Reason}
