@@ -56,7 +56,7 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
         CHECK_CUDNN(cudnnSetStream(cudnn_handle, stream));
         
         // Initialize Stable Diffusion context
-        sd_ctx = sd_ctx_new();
+        sd_ctx = new_sd_ctx();
         if (!sd_ctx) {
             throw std::runtime_error("Failed to create Stable Diffusion context");
         }
@@ -84,7 +84,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
         std::vector<float> params = binary_to_vector(&params_bin);
         
         // Setup Stable Diffusion parameters
-        sd_params_t params = {
+        struct sd_params params = {
             .width = 512,
             .height = 512,
             .steps = 20,
@@ -100,7 +100,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
         };
         
         // Generate image
-        sd_image_t* image = sd_txt2img(sd_ctx, prompt.c_str(), params);
+        struct sd_image* image = txt2img(sd_ctx, prompt.c_str(), &params);
         if (!image) {
             throw std::runtime_error("Failed to generate image");
         }
@@ -109,7 +109,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
         std::vector<float> result(image->data, image->data + image->width * image->height * 3);
         
         // Free image
-        sd_image_free(image);
+        free_sd_image(image);
         
         return enif_make_tuple2(env,
                               enif_make_atom(env, "ok"),
@@ -125,7 +125,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
 static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
         if (sd_ctx) {
-            sd_ctx_free(sd_ctx);
+            free_sd_ctx(sd_ctx);
             sd_ctx = nullptr;
         }
         
