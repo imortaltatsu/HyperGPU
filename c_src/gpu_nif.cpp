@@ -6,7 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <cuda_fp16.h>  // For half precision support
-#include "stable-diffusion.h"  // From stable-diffusion.cpp
+#include "stable-diffusion.cpp/stable-diffusion.h"  // From stable-diffusion.cpp
 
 // Error handling
 #define CHECK_CUDA(call) { \
