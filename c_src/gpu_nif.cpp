@@ -56,7 +56,7 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
         CHECK_CUDNN(cudnnSetStream(cudnn_handle, stream));
         
         // Initialize Stable Diffusion context
-        sd_ctx = new_sd_ctx();
+        sd_ctx = new_sd_ctx("models/stable-diffusion-v1-5", nullptr, false);
         if (!sd_ctx) {
             throw std::runtime_error("Failed to create Stable Diffusion context");
         }
@@ -81,26 +81,44 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
         
         // Convert input data
         std::string prompt(reinterpret_cast<char*>(prompt_bin.data), prompt_bin.size);
-        std::vector<float> params = binary_to_vector(&params_bin);
+        std::vector<float> params_vec = binary_to_vector(&params_bin);
         
-        // Setup Stable Diffusion parameters
-        struct sd_params params = {
-            .width = 512,
-            .height = 512,
-            .steps = 20,
-            .seed = -1,  // Random seed
-            .cfg_scale = 7.0f,
-            .sampler = SD_SAMPLER_EULER_A,
-            .schedule = SD_SCHEDULE_DISCRETE,
-            .clip_skip = -1,
-            .vae_tiling = false,
-            .vae_on_cpu = false,
-            .clip_on_cpu = false,
-            .diffusion_fa = false
-        };
+        // Default parameters
+        int width = 512;
+        int height = 512;
+        int steps = 20;
+        float cfg_scale = 7.0f;
+        int seed = -1;
+        sample_method_t sampler = SAMPLE_METHOD_EULER_A;
+        int schedule = 0;  // Discrete schedule
         
         // Generate image
-        struct sd_image* image = txt2img(sd_ctx, prompt.c_str(), &params);
+        sd_image_t* image = txt2img(
+            sd_ctx,
+            prompt.c_str(),
+            "",  // negative prompt
+            steps,
+            cfg_scale,
+            0.0f,  // strength (unused for txt2img)
+            0.0f,  // noise (unused for txt2img)
+            width,
+            height,
+            sampler,
+            schedule,
+            seed,
+            -1,  // clip_skip
+            nullptr,  // input image (unused for txt2img)
+            0.0f,  // control_strength (unused)
+            0.0f,  // style_strength (unused)
+            false,  // normalize_input
+            nullptr,  // control_net_path
+            nullptr,  // control_net_cond
+            0,  // control_net_cond_size
+            0.0f,  // control_net_guidance_start
+            0.0f,  // control_net_guidance_end
+            0.0f   // control_net_guidance_scale
+        );
+        
         if (!image) {
             throw std::runtime_error("Failed to generate image");
         }
@@ -109,7 +127,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
         std::vector<float> result(image->data, image->data + image->width * image->height * 3);
         
         // Free image
-        free_sd_image(image);
+        sd_image_free(image);
         
         return enif_make_tuple2(env,
                               enif_make_atom(env, "ok"),
@@ -125,7 +143,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
 static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
         if (sd_ctx) {
-            free_sd_ctx(sd_ctx);
+            sd_ctx_free(sd_ctx);
             sd_ctx = nullptr;
         }
         
