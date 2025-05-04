@@ -170,4 +170,4 @@ static ErlNifFunc nif_funcs[] = {
     {"gpu_set_state", 1, gpu_set_state}
 };
 
-ERL_NIF_INIT(dev_gpu_nif, nif_funcs, NULL, NULL, NULL, NULL) 
+ERL_NIF_INIT(dev_gpu, nif_funcs, NULL, NULL, NULL, NULL) 

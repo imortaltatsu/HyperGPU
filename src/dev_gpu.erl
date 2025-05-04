@@ -1,6 +1,6 @@
 %%% @doc A device that provides GPU-accelerated image generation using Stable Diffusion.
 %%% This device uses NIFs to interface with the GPU hardware and stable-diffusion.cpp.
--module(dev_gpu_nif).
+-module(dev_gpu).
 -export([info/0, info/2, init/3, compute/3, terminate/3, snapshot/3, normalize/3]).
 -export([load/0, unload/0]).
 
