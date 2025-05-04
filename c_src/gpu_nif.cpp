@@ -5,6 +5,8 @@
 #include <vector>
 #include <memory>
 #include <stdexcept>
+#include <cuda_fp16.h>  // For half precision support
+#include "stable-diffusion.h"  // From stable-diffusion.cpp
 
 // Error handling
 #define CHECK_CUDA(call) { \
@@ -24,7 +26,7 @@
 // Global handles
 static cudnnHandle_t cudnn_handle = nullptr;
 static cudaStream_t stream = nullptr;
-static cudnnRNNDescriptor_t rnn_desc = nullptr;
+static sd_ctx_t* sd_ctx = nullptr;
 
 // Convert Erlang binary to C++ vector
 static std::vector<float> binary_to_vector(ErlNifBinary* bin) {
@@ -40,7 +42,7 @@ static ERL_NIF_TERM vector_to_binary(ErlNifEnv* env, const std::vector<float>& v
     return enif_make_binary(env, &bin);
 }
 
-// Initialize GPU and CuDNN
+// Initialize GPU and Stable Diffusion
 static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
         // Initialize CUDA
@@ -53,33 +55,11 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
         CHECK_CUDNN(cudnnCreate(&cudnn_handle));
         CHECK_CUDNN(cudnnSetStream(cudnn_handle, stream));
         
-        // Create RNN descriptor
-        CHECK_CUDNN(cudnnCreateRNNDescriptor(&rnn_desc));
-        
-        // Set RNN descriptor with deterministic mode
-        int hidden_size = 128;
-        int num_layers = 1;
-        cudnnDropoutDescriptor_t dropout_desc;
-        CHECK_CUDNN(cudnnCreateDropoutDescriptor(&dropout_desc));
-        
-        // Set RNN descriptor
-        CHECK_CUDNN(cudnnSetRNNDescriptor_v8(
-            rnn_desc,
-            CUDNN_RNN_ALGO_STANDARD,
-            CUDNN_LSTM,
-            CUDNN_RNN_SINGLE_INP_BIAS,
-            CUDNN_UNIDIRECTIONAL,
-            CUDNN_LINEAR_INPUT,
-            CUDNN_DATA_FLOAT,
-            CUDNN_DATA_FLOAT,
-            CUDNN_DEFAULT_MATH,
-            hidden_size,
-            hidden_size,
-            num_layers,
-            num_layers,
-            dropout_desc,
-            CUDNN_RNN_PADDED_IO_ENABLED
-        ));
+        // Initialize Stable Diffusion context
+        sd_ctx = sd_ctx_new();
+        if (!sd_ctx) {
+            throw std::runtime_error("Failed to create Stable Diffusion context");
+        }
         
         return enif_make_atom(env, "ok");
     } catch (const std::exception& e) {
@@ -89,42 +69,47 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
     }
 }
 
-// Perform GPU computation
+// Perform image generation with Stable Diffusion
 static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
-        ErlNifBinary input_bin, params_bin;
+        ErlNifBinary prompt_bin, params_bin;
         
-        if (!enif_inspect_binary(env, argv[0], &input_bin) ||
+        if (!enif_inspect_binary(env, argv[0], &prompt_bin) ||
             !enif_inspect_binary(env, argv[1], &params_bin)) {
             return enif_make_badarg(env);
         }
         
         // Convert input data
-        std::vector<float> input = binary_to_vector(&input_bin);
+        std::string prompt(reinterpret_cast<char*>(prompt_bin.data), prompt_bin.size);
         std::vector<float> params = binary_to_vector(&params_bin);
         
-        // Allocate GPU memory
-        float *d_input, *d_output;
-        CHECK_CUDA(cudaMalloc(&d_input, input.size() * sizeof(float)));
-        CHECK_CUDA(cudaMalloc(&d_output, input.size() * sizeof(float)));
+        // Setup Stable Diffusion parameters
+        sd_params_t params = {
+            .width = 512,
+            .height = 512,
+            .steps = 20,
+            .seed = -1,  // Random seed
+            .cfg_scale = 7.0f,
+            .sampler = SD_SAMPLER_EULER_A,
+            .schedule = SD_SCHEDULE_DISCRETE,
+            .clip_skip = -1,
+            .vae_tiling = false,
+            .vae_on_cpu = false,
+            .clip_on_cpu = false,
+            .diffusion_fa = false
+        };
         
-        // Copy data to GPU
-        CHECK_CUDA(cudaMemcpy(d_input, input.data(), 
-                            input.size() * sizeof(float), 
-                            cudaMemcpyHostToDevice));
+        // Generate image
+        sd_image_t* image = sd_txt2img(sd_ctx, prompt.c_str(), params);
+        if (!image) {
+            throw std::runtime_error("Failed to generate image");
+        }
         
-        // TODO: Implement your specific CuDNN operations here
-        // This is a placeholder for the actual computation
+        // Convert image to vector
+        std::vector<float> result(image->data, image->data + image->width * image->height * 3);
         
-        // Copy result back
-        std::vector<float> result(input.size());
-        CHECK_CUDA(cudaMemcpy(result.data(), d_output,
-                            result.size() * sizeof(float),
-                            cudaMemcpyDeviceToHost));
-        
-        // Cleanup
-        CHECK_CUDA(cudaFree(d_input));
-        CHECK_CUDA(cudaFree(d_output));
+        // Free image
+        sd_image_free(image);
         
         return enif_make_tuple2(env,
                               enif_make_atom(env, "ok"),
@@ -139,9 +124,9 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
 // Terminate GPU resources
 static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
-        if (rnn_desc) {
-            CHECK_CUDNN(cudnnDestroyRNNDescriptor(rnn_desc));
-            rnn_desc = nullptr;
+        if (sd_ctx) {
+            sd_ctx_free(sd_ctx);
+            sd_ctx = nullptr;
         }
         
         if (cudnn_handle) {
@@ -164,7 +149,7 @@ static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
 
 // Get GPU state
 static ERL_NIF_TERM gpu_get_state(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    // TODO: Implement state serialization
+    // TODO: Implement state serialization for Stable Diffusion model
     return enif_make_tuple2(env,
                           enif_make_atom(env, "ok"),
                           enif_make_binary(env, nullptr));
@@ -172,7 +157,7 @@ static ERL_NIF_TERM gpu_get_state(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
 
 // Set GPU state
 static ERL_NIF_TERM gpu_set_state(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    // TODO: Implement state deserialization
+    // TODO: Implement state deserialization for Stable Diffusion model
     return enif_make_atom(env, "ok");
 }
 

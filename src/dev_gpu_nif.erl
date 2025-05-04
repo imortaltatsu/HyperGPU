@@ -1,5 +1,5 @@
-%%% @doc A device that provides deterministic GPU computations using CUDA/CuDNN.
-%%% This device uses NIFs to interface with the GPU hardware.
+%%% @doc A device that provides GPU-accelerated image generation using Stable Diffusion.
+%%% This device uses NIFs to interface with the GPU hardware and stable-diffusion.cpp.
 -module(dev_gpu_nif).
 -export([info/2, init/3, compute/3, terminate/3, snapshot/3, normalize/3]).
 -export([load/0, unload/0]).
@@ -46,61 +46,132 @@ info(_Msg1, _Opts) ->
         excludes => []
     }.
 
-%% @doc Initialize the GPU device
+%% @doc Initialize the GPU device and Stable Diffusion
 init(M1, _M2, _Opts) ->
     ?event(running_init),
-    case gpu_init() of
-        {ok, _} -> 
-            ?event(gpu_initialized),
-            {ok, M1};
-        {error, Reason} ->
+    try
+        case gpu_init() of
+            {ok, _} -> 
+                ?event(gpu_initialized),
+                {ok, M1};
+            {error, Reason} ->
+                ?event(gpu_init_error, {reason, Reason}),
+                throw({gpu_init_error, Reason})
+        end
+    catch
+        Class:Reason:Stack ->
+            ?event(gpu_init_error, {class, Class}, {reason, Reason}, {stack, Stack}),
             throw({gpu_init_error, Reason})
     end.
 
-%% @doc Perform GPU computation
+%% @doc Generate an image using Stable Diffusion
+%% The input message should contain:
+%% - prompt: The text prompt for image generation
+%% - params: Optional parameters for generation
+%%   - width: Image width (default: 512)
+%%   - height: Image height (default: 512)
+%%   - steps: Number of sampling steps (default: 20)
+%%   - seed: Random seed (-1 for random)
+%%   - cfg_scale: Classifier-free guidance scale (default: 7.0)
+%%   - sampler: Sampling method (default: euler_a)
+%%   - schedule: Denoiser schedule (default: discrete)
 compute(M1, M2, Opts) ->
     ?event(running_compute),
     try
-        % Get input data from message
-        InputData = hb_ao:get(<<"input">>, M2, Opts),
-        % Get computation parameters
-        Params = hb_ao:get(<<"params">>, M2, Opts),
-        
+        % Get prompt from message
+        Prompt = hb_ao:get(<<"prompt">>, M2, Opts),
+        if not is_binary(Prompt) ->
+            ?event(invalid_prompt, {prompt, Prompt}),
+            throw({invalid_prompt, "Prompt must be a binary string"});
+        true -> ok
+        end,
+
+        % Get optional parameters
+        Params = maps:merge(#{
+            <<"width">> => 512,
+            <<"height">> => 512,
+            <<"steps">> => 20,
+            <<"seed">> => -1,
+            <<"cfg_scale">> => 7.0,
+            <<"sampler">> => <<"euler_a">>,
+            <<"schedule">> => <<"discrete">>,
+            <<"clip_skip">> => -1,
+            <<"vae_tiling">> => false,
+            <<"vae_on_cpu">> => false,
+            <<"clip_on_cpu">> => false,
+            <<"diffusion_fa">> => false
+        }, hb_ao:get(<<"params">>, M2, #{}, Opts)),
+
+        % Convert parameters to binary format
+        ParamsBin = term_to_binary(Params),
+
         % Perform GPU computation
-        case gpu_compute(InputData, Params) of
+        case gpu_compute(Prompt, ParamsBin) of
             {ok, Result} ->
                 ?event(computation_completed),
-                {ok, M1#{<<"result">> => Result}};
+                {ok, M1#{
+                    <<"result">> => Result,
+                    <<"width">> => maps:get(<<"width">>, Params),
+                    <<"height">> => maps:get(<<"height">>, Params)
+                }};
             {error, Reason} ->
+                ?event(gpu_compute_error, {reason, Reason}),
                 throw({gpu_compute_error, Reason})
         end
     catch
-        error:Error ->
-            throw({gpu_compute_error, Error})
+        Class:Reason:Stack ->
+            ?event(gpu_compute_error, {class, Class}, {reason, Reason}, {stack, Stack}),
+            throw({gpu_compute_error, Reason})
     end.
 
 %% @doc Terminate the GPU device
 terminate(M1, _M2, _Opts) ->
     ?event(terminating),
-    case gpu_terminate() of
-        ok -> {ok, M1};
-        {error, Reason} -> throw({gpu_terminate_error, Reason})
+    try
+        case gpu_terminate() of
+            ok -> {ok, M1};
+            {error, Reason} ->
+                ?event(gpu_terminate_error, {reason, Reason}),
+                throw({gpu_terminate_error, Reason})
+        end
+    catch
+        Class:Reason:Stack ->
+            ?event(gpu_terminate_error, {class, Class}, {reason, Reason}, {stack, Stack}),
+            throw({gpu_terminate_error, Reason})
     end.
 
 %% @doc Get GPU state snapshot
 snapshot(M1, _M2, _Opts) ->
-    case gpu_get_state() of
-        {ok, State} -> {ok, M1#{<<"state">> => State}};
-        {error, Reason} -> throw({gpu_snapshot_error, Reason})
+    ?event(getting_snapshot),
+    try
+        case gpu_get_state() of
+            {ok, State} -> {ok, M1#{<<"state">> => State}};
+            {error, Reason} ->
+                ?event(gpu_snapshot_error, {reason, Reason}),
+                throw({gpu_snapshot_error, Reason})
+        end
+    catch
+        Class:Reason:Stack ->
+            ?event(gpu_snapshot_error, {class, Class}, {reason, Reason}, {stack, Stack}),
+            throw({gpu_snapshot_error, Reason})
     end.
 
 %% @doc Normalize GPU state
 normalize(M1, M2, Opts) ->
-    case hb_ao:get(<<"state">>, M2, Opts) of
-        not_found -> {ok, M1};
-        State ->
-            case gpu_set_state(State) of
-                ok -> {ok, M1};
-                {error, Reason} -> throw({gpu_normalize_error, Reason})
-            end
+    ?event(normalizing_state),
+    try
+        case hb_ao:get(<<"state">>, M2, Opts) of
+            not_found -> {ok, M1};
+            State ->
+                case gpu_set_state(State) of
+                    ok -> {ok, M1};
+                    {error, Reason} ->
+                        ?event(gpu_normalize_error, {reason, Reason}),
+                        throw({gpu_normalize_error, Reason})
+                end
+        end
+    catch
+        Class:Reason:Stack ->
+            ?event(gpu_normalize_error, {class, Class}, {reason, Reason}, {stack, Stack}),
+            throw({gpu_normalize_error, Reason})
     end. 
