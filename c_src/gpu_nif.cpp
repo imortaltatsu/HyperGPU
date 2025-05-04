@@ -28,10 +28,9 @@ static cudnnHandle_t cudnn_handle = nullptr;
 static cudaStream_t stream = nullptr;
 static sd_ctx_t* sd_ctx = nullptr;
 
-// Convert Erlang binary to C++ vector
-static std::vector<float> binary_to_vector(ErlNifBinary* bin) {
-    return std::vector<float>(reinterpret_cast<float*>(bin->data),
-                            reinterpret_cast<float*>(bin->data + bin->size));
+// Convert Erlang binary to C++ string
+static std::string binary_to_string(ErlNifBinary* bin) {
+    return std::string(reinterpret_cast<char*>(bin->data), bin->size);
 }
 
 // Convert C++ vector to Erlang binary
@@ -64,18 +63,18 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
             nullptr,  // lora_model_dir
             nullptr,  // embed_dir
             nullptr,  // stacked_id_embed_dir
-            nullptr,  // vae_decode_only
-            nullptr,  // vae_tiling
-            nullptr,  // free_params_immediately
-            nullptr,  // thread_count
-            nullptr,  // wtype
-            nullptr,  // rng_type
-            nullptr,  // schedule
-            nullptr,  // clip_skip
-            nullptr,  // control_net_cpu
-            nullptr,  // normalize_input
-            nullptr,  // vae_on_cpu
-            nullptr   // verbose
+            false,    // vae_decode_only
+            false,    // vae_tiling
+            false,    // free_params_immediately
+            1,        // thread_count
+            SD_TYPE_F32,  // wtype
+            RNG_TYPE_CUDA,  // rng_type
+            SCHEDULE_DISCRETE,  // schedule
+            -1,       // clip_skip
+            false,    // control_net_cpu
+            false,    // normalize_input
+            false,    // vae_on_cpu
+            false     // verbose
         );
         
         if (!sd_ctx) {
@@ -90,34 +89,32 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
     }
 }
 
-// Perform image generation with Stable Diffusion
-static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+// Generate image from prompt
+static ERL_NIF_TERM generate_image(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
-        ErlNifBinary prompt_bin, params_bin;
+        ErlNifBinary prompt_bin;
         
-        if (!enif_inspect_binary(env, argv[0], &prompt_bin) ||
-            !enif_inspect_binary(env, argv[1], &params_bin)) {
+        if (!enif_inspect_binary(env, argv[0], &prompt_bin)) {
             return enif_make_badarg(env);
         }
         
-        // Convert input data
-        std::string prompt(reinterpret_cast<char*>(prompt_bin.data), prompt_bin.size);
-        std::vector<float> params_vec = binary_to_vector(&params_bin);
+        // Convert prompt to string
+        std::string prompt = binary_to_string(&prompt_bin);
         
-        // Default parameters matching the repository's examples
-        int width = 512;
-        int height = 512;
-        int steps = 20;
-        float cfg_scale = 7.0f;
-        int seed = -1;  // Random seed
-        const char* sampler = "euler_a";  // Default sampler from repository
-        const char* schedule = "discrete";  // Default schedule from repository
+        // Fixed parameters
+        const int width = 512;
+        const int height = 512;
+        const int steps = 20;
+        const float cfg_scale = 7.0f;
+        const int64_t seed = -1;  // Random seed
+        const enum sample_method_t sampler = SAMPLE_METHOD_EULER_A;
+        const enum schedule_t schedule = SCHEDULE_DISCRETE;
         
-        // Generate image using txt2img
+        // Generate image
         sd_image_t* image = txt2img(
             sd_ctx,
             prompt.c_str(),
-            "",  // negative prompt (empty string as default)
+            "",  // negative prompt
             steps,
             cfg_scale,
             0.0f,  // strength (unused for txt2img)
@@ -127,7 +124,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
             sampler,
             schedule,
             seed,
-            -1,  // clip_skip (unspecified)
+            -1,  // clip_skip
             nullptr,  // input image (unused for txt2img)
             0.0f,  // control_strength (unused)
             0.0f,  // style_strength (unused)
@@ -148,7 +145,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
         std::vector<float> result(image->data, image->data + image->width * image->height * 3);
         
         // Free image
-        free_image(image);
+        sd_image_free(image);
         
         return enif_make_tuple2(env,
                               enif_make_atom(env, "ok"),
@@ -164,7 +161,7 @@ static ERL_NIF_TERM gpu_compute(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
 static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
         if (sd_ctx) {
-            free_sd_ctx(sd_ctx);
+            sd_ctx_free(sd_ctx);
             sd_ctx = nullptr;
         }
         
@@ -186,27 +183,11 @@ static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM a
     }
 }
 
-// Get GPU state
-static ERL_NIF_TERM gpu_get_state(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    // TODO: Implement state serialization for Stable Diffusion model
-    return enif_make_tuple2(env,
-                          enif_make_atom(env, "ok"),
-                          enif_make_binary(env, nullptr));
-}
-
-// Set GPU state
-static ERL_NIF_TERM gpu_set_state(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-    // TODO: Implement state deserialization for Stable Diffusion model
-    return enif_make_atom(env, "ok");
-}
-
 // NIF function definitions
 static ErlNifFunc nif_funcs[] = {
     {"gpu_init", 0, gpu_init},
-    {"gpu_compute", 2, gpu_compute},
-    {"gpu_terminate", 0, gpu_terminate},
-    {"gpu_get_state", 0, gpu_get_state},
-    {"gpu_set_state", 1, gpu_set_state}
+    {"generate_image", 1, generate_image},
+    {"gpu_terminate", 0, gpu_terminate}
 };
 
 ERL_NIF_INIT(dev_gpu, nif_funcs, NULL, NULL, NULL, NULL) 
