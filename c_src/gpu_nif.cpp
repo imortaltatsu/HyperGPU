@@ -68,8 +68,8 @@ static ERL_NIF_TERM gpu_init(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]
             false,    // free_params_immediately
             1,        // thread_count
             SD_TYPE_F32,  // wtype
-            RNG_TYPE_CUDA,  // rng_type
-            SCHEDULE_DISCRETE,  // schedule
+            "cuda",   // rng_type
+            "discrete",  // schedule
             -1,       // clip_skip
             false,    // control_net_cpu
             false,    // normalize_input
@@ -107,8 +107,8 @@ static ERL_NIF_TERM generate_image(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
         const int steps = 20;
         const float cfg_scale = 7.0f;
         const int64_t seed = -1;  // Random seed
-        const enum sample_method_t sampler = SAMPLE_METHOD_EULER_A;
-        const enum schedule_t schedule = SCHEDULE_DISCRETE;
+        const char* sampler = "euler_a";
+        const char* schedule = "discrete";
         
         // Generate image
         sd_image_t* image = txt2img(
@@ -145,7 +145,7 @@ static ERL_NIF_TERM generate_image(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
         std::vector<float> result(image->data, image->data + image->width * image->height * 3);
         
         // Free image
-        sd_image_free(image);
+        free_image(image);
         
         return enif_make_tuple2(env,
                               enif_make_atom(env, "ok"),
@@ -161,7 +161,7 @@ static ERL_NIF_TERM generate_image(ErlNifEnv* env, int argc, const ERL_NIF_TERM 
 static ERL_NIF_TERM gpu_terminate(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     try {
         if (sd_ctx) {
-            sd_ctx_free(sd_ctx);
+            free_sd_ctx(sd_ctx);
             sd_ctx = nullptr;
         }
         
