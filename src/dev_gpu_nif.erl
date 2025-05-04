@@ -1,7 +1,7 @@
 %%% @doc A device that provides GPU-accelerated image generation using Stable Diffusion.
 %%% This device uses NIFs to interface with the GPU hardware and stable-diffusion.cpp.
 -module(dev_gpu_nif).
--export([info/2, init/3, compute/3, terminate/3, snapshot/3, normalize/3]).
+-export([info/0, info/2, init/3, compute/3, terminate/3, snapshot/3, normalize/3]).
 -export([load/0, unload/0]).
 
 %% NIF functions
@@ -40,14 +40,29 @@ unload() ->
     gpu_terminate(),
     ok.
 
-%% @doc Device info
-info(_Msg1, _Opts) ->
+%% @doc Basic device info
+info() ->
     #{
-        excludes => []
+        excludes => [],
+        endpoints => #{
+            <<"generate">> => fun generate/4,
+            <<"init">> => fun init/4,
+            <<"terminate">> => fun terminate/4,
+            <<"snapshot">> => fun snapshot/4,
+            <<"normalize">> => fun normalize/4
+        }
     }.
 
+%% @doc Device info with message context
+info(_Msg1, _Opts) ->
+    info().
+
+%% @doc Generate image endpoint
+generate(M1, M2, Opts, _) ->
+    compute(M1, M2, Opts).
+
 %% @doc Initialize the GPU device and Stable Diffusion
-init(M1, _M2, _Opts) ->
+init(M1, _M2, _Opts, _) ->
     ?event(running_init),
     try
         case gpu_init() of
@@ -125,7 +140,7 @@ compute(M1, M2, Opts) ->
     end.
 
 %% @doc Terminate the GPU device
-terminate(M1, _M2, _Opts) ->
+terminate(M1, _M2, _Opts, _) ->
     ?event(terminating),
     try
         case gpu_terminate() of
@@ -141,7 +156,7 @@ terminate(M1, _M2, _Opts) ->
     end.
 
 %% @doc Get GPU state snapshot
-snapshot(M1, _M2, _Opts) ->
+snapshot(M1, _M2, _Opts, _) ->
     ?event(getting_snapshot),
     try
         case gpu_get_state() of
@@ -157,7 +172,7 @@ snapshot(M1, _M2, _Opts) ->
     end.
 
 %% @doc Normalize GPU state
-normalize(M1, M2, Opts) ->
+normalize(M1, M2, Opts, _) ->
     ?event(normalizing_state),
     try
         case hb_ao:get(<<"state">>, M2, Opts) of
